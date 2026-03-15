@@ -31,12 +31,13 @@ class GardenGramDB:
             try:
                 await db.execute('ALTER TABLE players ADD COLUMN cursor_pos INTEGER DEFAULT 0')
                 await db.execute('ALTER TABLE players ADD COLUMN last_spawn_time REAL DEFAULT 0')
+                await db.execute('ALTER TABLE players ADD COLUMN selected_item TEXT DEFAULT NULL')
                 await db.commit()
             except aiosqlite.OperationalError:
                 pass # Columns already exist
                 
             async with db.execute(
-                'SELECT nick, state, grid, inventory, tutorial_step, money, cursor_pos, last_spawn_time FROM players WHERE user_id = ?',
+                'SELECT nick, state, grid, inventory, tutorial_step, money, cursor_pos, last_spawn_time, selected_item FROM players WHERE user_id = ?',
                 (user_id,)
             ) as cur:
                 row = await cur.fetchone()
@@ -49,7 +50,8 @@ class GardenGramDB:
                         'tutorial_step': row[4],
                         'money': row[5],
                         'cursor_pos': row[6] if len(row) > 6 and row[6] is not None else 0,
-                        'last_spawn_time': row[7] if len(row) > 7 and row[7] is not None else 0.0
+                        'last_spawn_time': row[7] if len(row) > 7 and row[7] is not None else 0.0,
+                        'selected_item': row[8] if len(row) > 8 else None
                     }
                 return None
     
@@ -121,6 +123,18 @@ class GardenGramDB:
             await db.execute(
                 'UPDATE players SET last_spawn_time = ? WHERE user_id = ?',
                 (time_val, user_id)
+            )
+            await db.commit()
+
+    async def get_selected_item(self, user_id: int) -> Optional[str]:
+        player = await self.get_player(user_id)
+        return player['selected_item'] if player else None
+
+    async def set_selected_item(self, user_id: int, item: Optional[str]):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                'UPDATE players SET selected_item = ? WHERE user_id = ?',
+                (item, user_id)
             )
             await db.commit()
 

@@ -13,7 +13,8 @@ async def init_db(db_path: str):
                 tutorial_step INTEGER DEFAULT 0,
                 money INTEGER DEFAULT 100,
                 cursor_pos INTEGER DEFAULT 0,
-                last_spawn_time REAL DEFAULT 0
+                last_spawn_time REAL DEFAULT 0,
+                selected_item TEXT DEFAULT NULL
             )
         ''')
         await db.commit()

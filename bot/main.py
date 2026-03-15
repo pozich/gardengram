@@ -49,38 +49,39 @@ def render_grid(grid: List[str], cursor_pos: int = 0) -> str:
     field_text += "```"
     return field_text
 
-def grid_keyboard() -> InlineKeyboardMarkup:
+def mode_keyboard() -> list:
+    return [
+        InlineKeyboardButton(text="🌱 Garden", callback_data="mode_garden"),
+        InlineKeyboardButton(text="🍳 Kitchen", callback_data="mode_kitchen"),
+        InlineKeyboardButton(text="🐴 Donkey", callback_data="mode_donkey")
+    ]
+
+def grid_keyboard(mode: str) -> InlineKeyboardMarkup:
     """Ретро клавиатура"""
     kb = [
         [
             InlineKeyboardButton(text=" ", callback_data="none"),
-            InlineKeyboardButton(text="⬆️", callback_data="move_up"),
+            InlineKeyboardButton(text="⬆️", callback_data=f"move_up_{mode}"),
             InlineKeyboardButton(text=" ", callback_data="none")
         ],
         [
-            InlineKeyboardButton(text="⬅️", callback_data="move_left"),
-            InlineKeyboardButton(text="✅ Выполнить", callback_data="action_execute"),
-            InlineKeyboardButton(text="➡️", callback_data="move_right")
+            InlineKeyboardButton(text="⬅️", callback_data=f"move_left_{mode}"),
+            InlineKeyboardButton(text="✅ Выполнить", callback_data=f"action_execute_{mode}"),
+            InlineKeyboardButton(text="➡️", callback_data=f"move_right_{mode}")
         ],
         [
             InlineKeyboardButton(text=" ", callback_data="none"),
-            InlineKeyboardButton(text="⬇️", callback_data="move_down"),
+            InlineKeyboardButton(text="⬇️", callback_data=f"move_down_{mode}"),
             InlineKeyboardButton(text=" ", callback_data="none")
-        ],
-        [
-            InlineKeyboardButton(text="🍳 Кухня", callback_data="mode_kitchen"),
-            InlineKeyboardButton(text="🐴 Осёл", callback_data="mode_donkey")
         ]
     ]
     
+    # Add mode switchers dynamically, excluding the current mode
+    mode_btns = mode_keyboard()
+    bottom_row = [btn for btn in mode_btns if btn.callback_data != f"mode_{mode}"]
+    kb.append(bottom_row)
+    
     return InlineKeyboardMarkup(inline_keyboard=kb)
-
-def mode_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌱 Garden", callback_data="mode_garden")],
-        [InlineKeyboardButton(text="🍳 Kitchen", callback_data="mode_kitchen")],
-        [InlineKeyboardButton(text="🐴 Donkey", callback_data="mode_donkey")]
-    ])
 
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
@@ -169,7 +170,7 @@ async def show_garden(message_or_cb):
     apple_count = grid.count("🍎")
     
     field_text = render_grid(grid, cursor_pos)
-    kb = grid_keyboard()
+    kb = grid_keyboard("garden")
     
     text = f"🌱 **Сад** (найди {wheat_count}🌾 и {apple_count}🍎)\n\n{field_text}"
     
@@ -181,8 +182,8 @@ async def show_garden(message_or_cb):
         except:
             pass
 
-@router.callback_query(F.data == "action_execute")
-async def action_execute(callback: CallbackQuery):
+@router.callback_query(F.data == "action_execute_garden")
+async def action_execute_garden(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     grid = await db.get_player_grid(user_id)
@@ -210,68 +211,123 @@ async def switch_mode(callback: CallbackQuery):
         await show_donkey(callback)
     await callback.answer()
 
-async def show_kitchen(callback: CallbackQuery):
+def get_kitchen_grid(inventory: dict) -> List[str]:
+    grid = ["."] * 16
+    
+    # 0-11 for inventory ingredients that can be cooked
+    idx = 0
+    for item_key, count in inventory.items():
+        if getattr(db, 'models', None) is None:
+            # Fallback direct lookup just in case
+            emoji = INGREDIENTS.get(item_key, {}).get('emoji') or RECIPES.get(item_key, {}).get('emoji') or "?"
+        else:
+            emoji = INGREDIENTS.get(item_key, {}).get('emoji') or RECIPES.get(item_key, {}).get('emoji') or "?"
+            
+        if idx < 12 and count > 0:
+            grid[idx] = emoji
+            idx += 1
+            
+    # Bottom row (12-15) for appliances
+    grid[12] = "🔪" # Physical
+    grid[13] = "🔥" # Thermal
+    grid[14] = "🧫" # Bio
+    grid[15] = "💧" # Water
+    return grid
+
+
+
+@router.callback_query(F.data == "action_execute_kitchen")
+async def action_execute_kitchen(callback: CallbackQuery):
     user_id = callback.from_user.id
+    pos = await db.get_cursor_pos(user_id)
     inventory = await db.get_inventory(user_id)
+    grid = get_kitchen_grid(inventory)
+    item = grid[pos]
     
-    inv_text = "📦 **Инвентарь**:\n"
-    if not inventory:
-        inv_text += "Пусто\n"
-    for item, count in inventory.items():
-        inv_text += f"{item}: {count}\n"
-    
-    text = f"🍳 **Кухня**\n\n{inv_text}\nВыбери рецепт или перейди в другой режим!"
-    
-    kb = []
-    kb.append([InlineKeyboardButton(text="💧 Набрать воды", callback_data="get_water")])
-    
-    for recipe_id, recipe in RECIPES.items():
-        res_name = recipe['result']
-        res_emoji = recipe['emoji']
-        cost_text = ", ".join(f"{c}x {ing}" for ing, c in recipe['from'])
-        kb.append([InlineKeyboardButton(
-            text=f"Сделать {res_emoji} {res_name} ({cost_text})",
-            callback_data=f"craft_{recipe_id}"
-        )])
-    
-    kb.extend(mode_keyboard().inline_keyboard)
-    
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-    await callback.answer()
-
-@router.callback_query(F.data == "get_water")
-async def get_water_handler(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    await db.add_inventory(user_id, "water", 1)
-    await callback.answer("💧 Вы набрали воды!")
-    await show_kitchen(callback)
-
-@router.callback_query(F.data.startswith("craft_"))
-async def craft_item(callback: CallbackQuery):
-    recipe_id = callback.data.split("craft_")[1]
-    user_id = callback.from_user.id
-    
-    if recipe_id not in RECIPES:
-        await callback.answer("❌ Неизвестный рецепт!")
+    if item == ".":
+        await callback.answer("❌ Пусто!")
         return
         
-    recipe = RECIPES[recipe_id]
-    inventory = await db.get_inventory(user_id)
-    
-    # Check ingredients
-    for ing, count in recipe['from']:
-        if inventory.get(ing, 0) < count:
-            await callback.answer(f"❌ Не хватает {ing} (нужно {count})")
-            return
+    if pos < 12: # Pick up item
+        # Find item id by emoji
+        item_id = None
+        for k, v in INGREDIENTS.items():
+            if v.get('emoji') == item: item_id = k
+        for k, v in RECIPES.items():
+            if v.get('emoji') == item: item_id = k
             
-    # Deduct ingredients
-    for ing, count in recipe['from']:
-        await db.remove_inventory(user_id, ing, count)
+        if item_id:
+            await db.set_selected_item(user_id, item)
+            await callback.answer(f"✋ Взято: {item}")
+        else:
+            await callback.answer("❌ Не удалось взять")
+    else: # Appliance action
+        await process_appliance(user_id, item, callback)
         
-    await db.add_inventory(user_id, recipe['result'], 1)
-    await callback.answer(f"✅ Приготовлено: {recipe['result']} {recipe['emoji']}!")
-    
     await show_kitchen(callback)
+    
+async def process_appliance(user_id, appliance_emoji, callback):
+    appliance_map = {"🔪": "physical", "🔥": "thermal", "🧫": "bio", "💧": "water"}
+    process = appliance_map.get(appliance_emoji)
+    
+    if process == "water":
+        await db.add_inventory(user_id, "water", 1)
+        await callback.answer("💧 Вы набрали воды!")
+        return
+        
+    selected_emoji = await db.get_selected_item(user_id)
+    if not selected_emoji:
+        await callback.answer("❌ Ничего не выбрано!")
+        return
+        
+    # Find item ID from emoji
+    selected_id = None
+    for k, v in INGREDIENTS.items():
+        if v.get('emoji') == selected_emoji: selected_id = k
+    for k, v in RECIPES.items():
+        if v.get('emoji') == selected_emoji: selected_id = k
+        
+    if not selected_id:
+        await callback.answer("❌ Ошибка предмета")
+        return
+        
+    # Find recipe
+    matched_recipe_id = None
+    for r_id, r in RECIPES.items():
+        if r.get('process') == process and any(ing[0] == selected_id for ing in r.get('from', [])):
+            matched_recipe_id = r_id
+            break
+            
+    # Allow combining two ingredients if 'process' is None (like dough from flour and water)
+    if not matched_recipe_id and appliance_emoji == "🔪": # Use knife for combining as a fallback
+        for r_id, r in RECIPES.items():
+            if r.get('process') is None and any(ing[0] == selected_id for ing in r.get('from', [])):
+                reqs = r.get('from', [])
+                other_ing = reqs[1][0] if reqs[0][0] == selected_id and len(reqs) > 1 else reqs[0][0]
+                
+                inventory = await db.get_inventory(user_id)
+                if inventory.get(other_ing, 0) > 0 and other_ing != selected_id:
+                    await db.remove_inventory(user_id, selected_id, 1)
+                    await db.remove_inventory(user_id, other_ing, 1)
+                    await db.add_inventory(user_id, r_id, 1)
+                    await db.set_selected_item(user_id, None)
+                    await callback.answer(f"✅ Приготовлено: {r.get('emoji')}!")
+                    return
+                elif len(reqs) == 1 or other_ing == selected_id: # Single ingredient combination?
+                     pass
+                else:
+                    await callback.answer(f"❌ Не хватает {other_ing}")
+                    return
+                    
+    if not matched_recipe_id:
+        await callback.answer("❌ Нет рецепта!")
+        return
+        
+    recipe = RECIPES[matched_recipe_id]
+    await db.remove_inventory(user_id, selected_id, 1)
+    await db.add_inventory(user_id, recipe['result'], 1)
+    await db.set_selected_item(user_id, None)
+    await callback.answer(f"✅ Приготовлено: {recipe['result']} {recipe['emoji']}!")
 
 async def show_donkey(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -284,7 +340,7 @@ async def show_donkey(callback: CallbackQuery):
     ]
     
     text = "🐴 **Осёл**\n\n" + random.choice(donkey_phrases)
-    kb = mode_keyboard().inline_keyboard
+    kb = [mode_keyboard()]
     
     actions = []
     if inventory.get('apple_pie', 0) > 0:
@@ -316,49 +372,53 @@ async def give_donkey(callback: CallbackQuery):
         msg = "🐴 Ммм, вкусное яблочко! Спасибо."
         
     text = "🐴 **Осёл**\n\n" + msg
-    kb = mode_keyboard()
+    kb = InlineKeyboardMarkup(inline_keyboard=[mode_keyboard()])
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     await callback.answer("✅ Ты накормил осла!")
 
 def move_handlers():
     """Обработчики действий"""
-    @router.callback_query(F.data == "move_left")
+    @router.callback_query(F.data.startswith("move_left_"))
     async def move_left(callback: CallbackQuery):
+        mode = callback.data.split("_")[2]
         user_id = callback.from_user.id
         pos = await db.get_cursor_pos(user_id)
         if pos % 4 > 0:
             await db.set_cursor_pos(user_id, pos - 1)
-            await show_garden(callback)
+            await (show_garden(callback) if mode == "garden" else show_kitchen(callback))
         else:
             await callback.answer("🛑 Стена!")
             
-    @router.callback_query(F.data == "move_right")
+    @router.callback_query(F.data.startswith("move_right_"))
     async def move_right(callback: CallbackQuery):
+        mode = callback.data.split("_")[2]
         user_id = callback.from_user.id
         pos = await db.get_cursor_pos(user_id)
         if pos % 4 < 3:
             await db.set_cursor_pos(user_id, pos + 1)
-            await show_garden(callback)
+            await (show_garden(callback) if mode == "garden" else show_kitchen(callback))
         else:
             await callback.answer("🛑 Стена!")
             
-    @router.callback_query(F.data == "move_up")
+    @router.callback_query(F.data.startswith("move_up_"))
     async def move_up(callback: CallbackQuery):
+        mode = callback.data.split("_")[2]
         user_id = callback.from_user.id
         pos = await db.get_cursor_pos(user_id)
         if pos >= 4:
             await db.set_cursor_pos(user_id, pos - 4)
-            await show_garden(callback)
+            await (show_garden(callback) if mode == "garden" else show_kitchen(callback))
         else:
             await callback.answer("🛑 Стена!")
             
-    @router.callback_query(F.data == "move_down")
+    @router.callback_query(F.data.startswith("move_down_"))
     async def move_down(callback: CallbackQuery):
+        mode = callback.data.split("_")[2]
         user_id = callback.from_user.id
         pos = await db.get_cursor_pos(user_id)
         if pos < 12:
             await db.set_cursor_pos(user_id, pos + 4)
-            await show_garden(callback)
+            await (show_garden(callback) if mode == "garden" else show_kitchen(callback))
         else:
             await callback.answer("🛑 Стена!")
 
