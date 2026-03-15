@@ -28,6 +28,9 @@ RECIPES = {
     'apple_slices': {'from': [('apple', 1)], 'process': 'physical', 'emoji': '🍎', 'result': 'apple_slices'},
     'apple_pie_raw': {'from': [('dough', 1), ('apple_slices', 1)], 'process': None, 'emoji': '🥧', 'result': 'apple_pie_raw'},
     'apple_pie': {'from': [('apple_pie_raw', 1)], 'process': 'thermal', 'emoji': '🍰', 'result': 'apple_pie'},
+    # Fermentation recipes (process: bio, auto)
+    'juice': {'from': [('apple', 1)], 'process': 'bio', 'emoji': '🧃', 'result': 'juice', 'ferment_time': 300}, # 5 min
+    'wine': {'from': [('juice', 1)], 'process': 'bio', 'emoji': '🍷', 'result': 'wine', 'ferment_time': 1200}, # 20 min
 }
 
 TUTORIAL_STEPS = [

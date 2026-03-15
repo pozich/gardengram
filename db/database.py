@@ -13,10 +13,12 @@ class GardenGramDB:
         await init_db(self.db_path)
     
     async def register_player(self, user_id: int, nick: str):
+        import json
         async with aiosqlite.connect(self.db_path) as db:
+            default_inventory = json.dumps({'sugar': 1, 'water': 1})
             await db.execute(
-                'INSERT OR REPLACE INTO players (user_id, nick, state) VALUES (?, ?, ?)',
-                (user_id, nick, 'tutorial')
+                'INSERT OR REPLACE INTO players (user_id, nick, state, inventory) VALUES (?, ?, ?, ?)',
+                (user_id, nick, 'tutorial', default_inventory)
             )
             await db.commit()
     
@@ -46,8 +48,14 @@ class GardenGramDB:
             except aiosqlite.OperationalError:
                 pass
                 
+            try:
+                await db.execute('ALTER TABLE players ADD COLUMN last_ferment_check REAL DEFAULT 0')
+                await db.commit()
+            except aiosqlite.OperationalError:
+                pass
+                
             async with db.execute(
-                'SELECT nick, state, grid, inventory, tutorial_step, money, cursor_pos, last_spawn_time, selected_item FROM players WHERE user_id = ?',
+                'SELECT nick, state, grid, inventory, tutorial_step, money, cursor_pos, last_spawn_time, selected_item, last_ferment_check FROM players WHERE user_id = ?',
                 (user_id,)
             ) as cur:
                 row = await cur.fetchone()
@@ -61,7 +69,8 @@ class GardenGramDB:
                         'money': row[5],
                         'cursor_pos': row[6] if len(row) > 6 and row[6] is not None else 0,
                         'last_spawn_time': row[7] if len(row) > 7 and row[7] is not None else 0.0,
-                        'selected_item': row[8] if len(row) > 8 else None
+                        'selected_item': row[8] if len(row) > 8 else None,
+                        'last_ferment_check': row[9] if len(row) > 9 and row[9] is not None else 0.0
                     }
                 return None
     
@@ -92,8 +101,58 @@ class GardenGramDB:
             await db.commit()
     
     async def get_inventory(self, user_id: int) -> Dict[str, int]:
+        await self.process_fermentation(user_id)
         player = await self.get_player(user_id)
         return player['inventory'] if player else {}
+        
+    async def process_fermentation(self, user_id: int):
+        import time
+        player = await self.get_player(user_id)
+        if not player: return
+        
+        last_check = player.get('last_ferment_check', 0)
+        current_time = time.time()
+        
+        if last_check == 0:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute('UPDATE players SET last_ferment_check = ? WHERE user_id = ?', (current_time, user_id))
+                await db.commit()
+            return
+
+        elapsed = current_time - last_check
+        inventory = player['inventory']
+        changed = False
+        
+        # Check each item if it can ferment
+        new_inventory = inventory.copy()
+        for r_id, r in RECIPES.items():
+            if r.get('process') == 'bio' and 'ferment_time' in r:
+                reqs = r.get('from', [])
+                if len(reqs) == 1:
+                    item_id, qty = reqs[0]
+                    if inventory.get(item_id, 0) >= qty:
+                        # How many times can it ferment since last check?
+                        # This is a bit simplified: we check if enough total time has passed.
+                        # Real "background" fermentation should probably track per-item start time,
+                        # but for now we'll do global check.
+                        if elapsed >= r['ferment_time']:
+                            can_ferment_count = inventory[item_id] // qty
+                            new_inventory[item_id] -= can_ferment_count * qty
+                            if new_inventory[item_id] == 0: del new_inventory[item_id]
+                            new_inventory[r['result']] = new_inventory.get(r['result'], 0) + can_ferment_count
+                            changed = True
+        
+        if changed:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    'UPDATE players SET inventory = ?, last_ferment_check = ? WHERE user_id = ?',
+                    (json.dumps(new_inventory), current_time, user_id)
+                )
+                await db.commit()
+        elif elapsed > 60: # Update anyway to avoid huge elapsed jumps
+             async with aiosqlite.connect(self.db_path) as db:
+                await db.execute('UPDATE players SET last_ferment_check = ? WHERE user_id = ?', (current_time, user_id))
+                await db.commit()
     
     async def remove_inventory(self, user_id: int, item: str, quantity: int = 1):
         async with aiosqlite.connect(self.db_path) as db:

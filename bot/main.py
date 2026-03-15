@@ -31,23 +31,22 @@ GRID_SIZE = 4
 class FarmStates(StatesGroup):
     registration_nick = State()
 
-def render_grid(grid: List[str], cursor_pos: int = 0) -> str:
-    """ЧИСТОЕ ASCII поле"""
-    field_text = "```\n"
+def render_grid(grid, cursor_pos) -> str:
+    """Стабильная эмодзи-сетка"""
+    lines = []
     for i in range(GRID_SIZE):
-        row_items = []
-        for j in range(4):
-            pos = i * 4 + j
-            item = grid[pos]
+        row = ""
+        for j in range(GRID_SIZE):
+            pos = i * GRID_SIZE + j
             if pos == cursor_pos:
-                row_items.append(f"[{item}]")
+                row += "📍"
             else:
-                row_items.append(f" {item} ")
-        
-        row = "|".join(row_items)
-        field_text += f"{row}\n"
-    field_text += "```"
-    return field_text
+                item = grid[pos]
+                # Use a placeholder for empty cells to keep alignment
+                row += item if item != "." else "▫️"
+        lines.append(row)
+    
+    return "\n".join(lines)
 
 def mode_keyboard() -> list:
     return [
@@ -58,6 +57,8 @@ def mode_keyboard() -> list:
 
 def grid_keyboard(mode: str) -> InlineKeyboardMarkup:
     """Ретро клавиатура"""
+    action_text = "✅ Взять" if mode == "kitchen" else "✅ Выполнить"
+    
     kb = [
         [
             InlineKeyboardButton(text=" ", callback_data="none"),
@@ -66,7 +67,7 @@ def grid_keyboard(mode: str) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="⬅️", callback_data=f"move_left_{mode}"),
-            InlineKeyboardButton(text="✅ Выполнить", callback_data=f"action_execute_{mode}"),
+            InlineKeyboardButton(text=" ", callback_data="none"), # Placeholder for Take button
             InlineKeyboardButton(text="➡️", callback_data=f"move_right_{mode}")
         ],
         [
@@ -76,7 +77,17 @@ def grid_keyboard(mode: str) -> InlineKeyboardMarkup:
         ]
     ]
     
-    # Add mode switchers dynamically, excluding the current mode
+    # Insert Take button safely
+    kb[1][1] = InlineKeyboardButton(text=action_text, callback_data=f"action_execute_{mode}")
+    
+    if mode == "kitchen":
+        # Add appliance buttons
+        kb.append([
+            InlineKeyboardButton(text="🔪 Нарезать", callback_data="process_physical"),
+            InlineKeyboardButton(text="🔥 Пожарить", callback_data="process_thermal")
+        ])
+    
+    # Add mode switchers dynamically
     mode_btns = mode_keyboard()
     bottom_row = [btn for btn in mode_btns if btn.callback_data != f"mode_{mode}"]
     kb.append(bottom_row)
@@ -122,20 +133,16 @@ async def register_nick(message: Message, state: FSMContext):
 
 @router.message(Command("garden"))
 async def garden_command(message: Message):
-    print(f"DEBUG: Received /garden from {message.from_user.id} in {message.chat.type}")
     try:
         user_id = message.from_user.id
         registered = await db.is_registered(user_id)
         
         if not registered:
-            print(f"DEBUG: User {user_id} is not registered")
             await message.answer("❌ Сначала зарегистрируйся в личке бота!")
             return
         
-        print(f"DEBUG: Showing garden for {user_id}")
         await show_garden(message)
     except Exception as e:
-        print(f"ERROR in garden_command: {e}")
         await message.answer(f"❌ Произошла ошибка: {e}")
 
 async def show_garden(message_or_cb):
@@ -179,18 +186,24 @@ async def show_garden(message_or_cb):
     field_text = render_grid(grid, cursor_pos)
     kb = grid_keyboard("garden")
     
-    text = f"🌱 **Сад** (найди {wheat_count}🌾 и {apple_count}🍎)\n\n{field_text}"
+    # What's under cursor?
+    focus_item = grid[cursor_pos]
+    focus_text = ""
+    if focus_item == "🌾": focus_text = "\n🔍 Наведено на: 🌾 Пшеница"
+    elif focus_item == "🍎": focus_text = "\n🔍 Наведено на: 🍎 Яблоко"
+    
+    text = f"🌱 **Сад** (найди {wheat_count}🌾 и {apple_count}🍎)\n\n{field_text}{focus_text}"
     
     if isinstance(message_or_cb, Message):
         try:
             await message_or_cb.reply(text, reply_markup=kb, parse_mode="Markdown")
-        except Exception as e:
-            print(f"ERROR replying in show_garden: {e}")
+        except:
+            pass
     else:
         try:
             await message_or_cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-        except Exception as e:
-            print(f"ERROR editing text in show_garden: {e}")
+        except:
+            pass
 
 @router.callback_query(F.data == "action_execute_garden")
 async def action_execute_garden(callback: CallbackQuery):
@@ -202,8 +215,9 @@ async def action_execute_garden(callback: CallbackQuery):
     
     if item in ["🌾", "🍎"]:
         grid[pos] = "."
+        item_id = "wheat" if item == "🌾" else "apple"
         await db.set_player_grid(user_id, grid)
-        await db.add_inventory(user_id, item, 1)
+        await db.add_inventory(user_id, item_id, 1)
         await callback.answer(f"✅ Собрано {item}!")
     else:
         await callback.answer("❌ Пусто!")
@@ -224,28 +238,20 @@ async def switch_mode(callback: CallbackQuery):
 def get_kitchen_grid(inventory: dict) -> List[str]:
     grid = ["."] * 16
     
-    # 0-11 for inventory ingredients that can be cooked
+    # Fill up to 16 slots with inventory ingredients
     idx = 0
-    # Items that are already emojis (like those collected from the garden)
     for res_emoji, count in inventory.items():
-        if idx >= 12: break
+        if idx >= 16: break
         if count <= 0: continue
         
         # If it's already an emoji, use it. Otherwise, look it up.
-        # Check if it's a single emoji char (roughly)
-        if len(res_emoji) <= 2: # Emojis can be 2 chars
+        if len(res_emoji) <= 2: 
             grid[idx] = res_emoji
         else:
-            # Look up in models
-            emoji = INGREDIENTS.get(res_emoji, {}).get('emoji') or RECIPES.get(res_emoji, {}).get('emoji') or "?"
+            emoji = INGREDIENTS.get(res_emoji, {}).get('emoji') or RECIPES.get(res_emoji, {}).get('emoji') or "📦"
             grid[idx] = emoji
         idx += 1
             
-    # Bottom row (12-15) for appliances
-    grid[12] = "🔪" # Physical
-    grid[13] = "🔥" # Thermal
-    grid[14] = "🧫" # Bio
-    grid[15] = "💧" # Water
     return grid
 
 async def show_kitchen(callback: CallbackQuery):
@@ -270,8 +276,22 @@ async def show_kitchen(callback: CallbackQuery):
     field_text = render_grid(grid, cursor_pos)
     kb = grid_keyboard("kitchen")
     
-    sel_text = f"В руке: {selected_item if selected_item else 'Ничего'}"
-    text = f"🍳 **Кухня**\n\n{inv_text}\n{sel_text}\n\n{field_text}"
+    # What's under cursor?
+    # grid in kitchen is items_in_inv
+    items_in_inv = [k for k, v in inventory.items() if v > 0]
+    focus_text = ""
+    if cursor_pos < len(items_in_inv):
+        item_id = items_in_inv[cursor_pos]
+        emoji = INGREDIENTS.get(item_id, {}).get('emoji') or RECIPES.get(item_id, {}).get('emoji') or "📦"
+        focus_text = f"\n🔍 Наведено на: {emoji} {item_id}"
+    
+    # Selected item display
+    sel_emoji = ""
+    if selected_item:
+        sel_emoji = INGREDIENTS.get(selected_item, {}).get('emoji') or RECIPES.get(selected_item, {}).get('emoji') or "📦"
+    
+    sel_text = f"В руке: {sel_emoji} {selected_item if selected_item else 'Ничего'}"
+    text = f"🍳 **Кухня**\n\n{inv_text}\n{sel_text}\n\n{field_text}{focus_text}"
     
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
@@ -282,29 +302,33 @@ async def action_execute_kitchen(callback: CallbackQuery):
     user_id = callback.from_user.id
     pos = await db.get_cursor_pos(user_id)
     inventory = await db.get_inventory(user_id)
-    grid = get_kitchen_grid(inventory)
-    item = grid[pos]
     
-    if item == ".":
+    # Get items list from inventory (only those count > 0)
+    items_in_inv = [k for k, v in inventory.items() if v > 0]
+    
+    if pos >= len(items_in_inv):
         await callback.answer("❌ Пусто!")
         return
         
-    if pos < 12: # Pick up item
-        # Find item id by emoji
-        item_id = None
-        for k, v in INGREDIENTS.items():
-            if v.get('emoji') == item: item_id = k
-        for k, v in RECIPES.items():
-            if v.get('emoji') == item: item_id = k
-            
-        if item_id:
-            await db.set_selected_item(user_id, item)
-            await callback.answer(f"✋ Взято: {item}")
-        else:
-            await callback.answer("❌ Не удалось взять")
-    else: # Appliance action
-        await process_appliance(user_id, item, callback)
-        
+    selected_id = items_in_inv[pos]
+    emoji = INGREDIENTS.get(selected_id, {}).get('emoji') or RECIPES.get(selected_id, {}).get('emoji') or "📦"
+    
+    await db.set_selected_item(user_id, selected_id)
+    await callback.answer(f"✋ Взято: {emoji} {selected_id}")
+    await show_kitchen(callback)
+
+
+@router.callback_query(F.data.startswith("process_"))
+async def handle_process_button(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    proc_type = callback.data.split("_")[1] # physical, thermal, bio, water
+    
+    # Map back to symbols for compatibility with process_appliance if needed, 
+    # but let's just use the proc_type directly.
+    symbol_map = {"physical": "🔪", "thermal": "🔥", "bio": "🧫", "water": "💧"}
+    symbol = symbol_map.get(proc_type)
+    
+    await process_appliance(user_id, symbol, callback)
     await show_kitchen(callback)
     
 async def process_appliance(user_id, appliance_emoji, callback):
@@ -316,20 +340,9 @@ async def process_appliance(user_id, appliance_emoji, callback):
         await callback.answer("💧 Вы набрали воды!")
         return
         
-    selected_emoji = await db.get_selected_item(user_id)
-    if not selected_emoji:
-        await callback.answer("❌ Ничего не выбрано!")
-        return
-        
-    # Find item ID from emoji
-    selected_id = None
-    for k, v in INGREDIENTS.items():
-        if v.get('emoji') == selected_emoji: selected_id = k
-    for k, v in RECIPES.items():
-        if v.get('emoji') == selected_emoji: selected_id = k
-        
+    selected_id = await db.get_selected_item(user_id)
     if not selected_id:
-        await callback.answer("❌ Ошибка предмета")
+        await callback.answer("❌ Сначала выберите предмет в сетке!")
         return
         
     # Find recipe
@@ -339,36 +352,50 @@ async def process_appliance(user_id, appliance_emoji, callback):
             matched_recipe_id = r_id
             break
             
-    # Allow combining two ingredients if 'process' is None (like dough from flour and water)
-    if not matched_recipe_id and appliance_emoji == "🔪": # Use knife for combining as a fallback
+    # Handle combination recipes (process: None)
+    if not matched_recipe_id:
         for r_id, r in RECIPES.items():
             if r.get('process') is None and any(ing[0] == selected_id for ing in r.get('from', [])):
                 reqs = r.get('from', [])
-                other_ing = reqs[1][0] if reqs[0][0] == selected_id and len(reqs) > 1 else reqs[0][0]
-                
-                inventory = await db.get_inventory(user_id)
-                if inventory.get(other_ing, 0) > 0 and other_ing != selected_id:
-                    await db.remove_inventory(user_id, selected_id, 1)
-                    await db.remove_inventory(user_id, other_ing, 1)
-                    await db.add_inventory(user_id, r_id, 1)
-                    await db.set_selected_item(user_id, None)
-                    await callback.answer(f"✅ Приготовлено: {r.get('emoji')}!")
-                    return
-                elif len(reqs) == 1 or other_ing == selected_id: # Single ingredient combination?
-                     pass
-                else:
-                    await callback.answer(f"❌ Не хватает {other_ing}")
-                    return
-                    
+                # If it's a 2-ingredient recipe, check if we have the other one
+                if len(reqs) == 2:
+                    other_ing = reqs[1][0] if reqs[0][0] == selected_id else reqs[0][0]
+                    inventory = await db.get_inventory(user_id)
+                    if inventory.get(other_ing, 0) > 0:
+                        matched_recipe_id = r_id
+                        # We'll need to remove the other ingredient too
+                        await db.remove_inventory(user_id, other_ing, 1)
+                        break
+                elif len(reqs) == 1:
+                    matched_recipe_id = r_id
+                    break            
+            # Allow combining two ingredients if 'process' is None (like dough from flour and water)
+            if not matched_recipe_id and appliance_emoji == "🔪": # Use knife for combining
+                for r_id, r in RECIPES.items():
+                    if r.get('process') is None and any(ing[0] == selected_id for ing in r.get('from', [])):
+                        reqs = r.get('from', [])
+                        # If it's a 2-ingredient recipe, check if we have the other one
+                        if len(reqs) == 2:
+                            other_ing = reqs[1][0] if reqs[0][0] == selected_id else reqs[0][0]
+                            inventory = await db.get_inventory(user_id)
+                            if inventory.get(other_ing, 0) > 0:
+                                matched_recipe_id = r_id
+                                # We'll need to remove the other ingredient too
+                                await db.remove_inventory(user_id, other_ing, 1)
+                                break
+                        elif len(reqs) == 1:
+                            matched_recipe_id = r_id
+                            break
+    
     if not matched_recipe_id:
-        await callback.answer("❌ Нет рецепта!")
+        await callback.answer("❌ Нет рецепта для этого действия!")
         return
         
     recipe = RECIPES[matched_recipe_id]
     await db.remove_inventory(user_id, selected_id, 1)
     await db.add_inventory(user_id, recipe['result'], 1)
     await db.set_selected_item(user_id, None)
-    await callback.answer(f"✅ Приготовлено: {recipe['result']} {recipe['emoji']}!")
+    await callback.answer(f"✅ Приготовлено: {recipe['emoji']} {recipe['result']}!")
 
 async def show_donkey(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -385,9 +412,9 @@ async def show_donkey(callback: CallbackQuery):
     
     actions = []
     if inventory.get('apple_pie', 0) > 0:
-        actions.append(InlineKeyboardButton(text="🍰 Дать яблочный пирог", callback_data="give_donkey_apple_pie"))
+        actions.append(InlineKeyboardButton(text="🍰 Дать пирог", callback_data="give_donkey_apple_pie"))
     if inventory.get('apple', 0) > 0:
-        actions.append(InlineKeyboardButton(text="🍎 Дать яблоко", callback_data="give_donkey_apple"))
+        actions.append(InlineKeyboardButton(text="🍎 Сменять яблоко на 💧 воду (x2)", callback_data="give_donkey_apple"))
         
     if actions:
         kb.insert(0, actions)
@@ -467,10 +494,7 @@ def move_handlers():
     async def ignore_press(callback: CallbackQuery):
         await callback.answer()
 
-@router.message()
-async def any_message_handler(message: Message):
-    if message.text:
-        print(f"DEBUG: Message in {message.chat.type} from {message.from_user.id}: {message.text[:50]}")
+    pass
 
 move_handlers()
 
