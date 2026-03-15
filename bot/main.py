@@ -234,9 +234,33 @@ def get_kitchen_grid(inventory: dict) -> List[str]:
     grid[15] = "💧" # Water
     return grid
 
-
-
-@router.callback_query(F.data == "action_execute_kitchen")
+async def show_kitchen(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    inventory = await db.get_inventory(user_id)
+    cursor_pos = await db.get_cursor_pos(user_id)
+    selected_item = await db.get_selected_item(user_id)
+    
+    # Generate ephemeral kitchen grid
+    grid = get_kitchen_grid(inventory)
+    
+    inv_text = "📦 **Инвентарь**:\n"
+    if not inventory:
+        inv_text += "Пусто\n"
+    for item, count in inventory.items():
+        emoji = INGREDIENTS.get(item, {}).get('emoji') or RECIPES.get(item, {}).get('emoji') or ""
+        inv_text += f"{emoji} {item}: {count}\n"
+        
+    field_text = render_grid(grid, cursor_pos)
+    kb = grid_keyboard("kitchen")
+    
+    sel_text = f"В руке: {selected_item if selected_item else 'Ничего'}"
+    text = f"🍳 **Кухня**\n\n{inv_text}\n{sel_text}\n\n{field_text}"
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except:
+        pass
+    await callback.answer()
 async def action_execute_kitchen(callback: CallbackQuery):
     user_id = callback.from_user.id
     pos = await db.get_cursor_pos(user_id)
