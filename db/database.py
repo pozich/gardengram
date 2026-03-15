@@ -30,11 +30,21 @@ class GardenGramDB:
             # Add columns if they don't exist yet (migration)
             try:
                 await db.execute('ALTER TABLE players ADD COLUMN cursor_pos INTEGER DEFAULT 0')
+                await db.commit()
+            except aiosqlite.OperationalError:
+                pass 
+                
+            try:
                 await db.execute('ALTER TABLE players ADD COLUMN last_spawn_time REAL DEFAULT 0')
+                await db.commit()
+            except aiosqlite.OperationalError:
+                pass
+
+            try:
                 await db.execute('ALTER TABLE players ADD COLUMN selected_item TEXT DEFAULT NULL')
                 await db.commit()
             except aiosqlite.OperationalError:
-                pass # Columns already exist
+                pass
                 
             async with db.execute(
                 'SELECT nick, state, grid, inventory, tutorial_step, money, cursor_pos, last_spawn_time, selected_item FROM players WHERE user_id = ?',
