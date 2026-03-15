@@ -226,16 +226,20 @@ def get_kitchen_grid(inventory: dict) -> List[str]:
     
     # 0-11 for inventory ingredients that can be cooked
     idx = 0
-    for item_key, count in inventory.items():
-        if getattr(db, 'models', None) is None:
-            # Fallback direct lookup just in case
-            emoji = INGREDIENTS.get(item_key, {}).get('emoji') or RECIPES.get(item_key, {}).get('emoji') or "?"
+    # Items that are already emojis (like those collected from the garden)
+    for res_emoji, count in inventory.items():
+        if idx >= 12: break
+        if count <= 0: continue
+        
+        # If it's already an emoji, use it. Otherwise, look it up.
+        # Check if it's a single emoji char (roughly)
+        if len(res_emoji) <= 2: # Emojis can be 2 chars
+            grid[idx] = res_emoji
         else:
-            emoji = INGREDIENTS.get(item_key, {}).get('emoji') or RECIPES.get(item_key, {}).get('emoji') or "?"
-            
-        if idx < 12 and count > 0:
+            # Look up in models
+            emoji = INGREDIENTS.get(res_emoji, {}).get('emoji') or RECIPES.get(res_emoji, {}).get('emoji') or "?"
             grid[idx] = emoji
-            idx += 1
+        idx += 1
             
     # Bottom row (12-15) for appliances
     grid[12] = "🔪" # Physical
@@ -257,8 +261,11 @@ async def show_kitchen(callback: CallbackQuery):
     if not inventory:
         inv_text += "Пусто\n"
     for item, count in inventory.items():
-        emoji = INGREDIENTS.get(item, {}).get('emoji') or RECIPES.get(item, {}).get('emoji') or ""
-        inv_text += f"{emoji} {item}: {count}\n"
+        if len(item) <= 2: # Already emoji
+            inv_text += f"{item}: {count}\n"
+        else:
+            emoji = INGREDIENTS.get(item, {}).get('emoji') or RECIPES.get(item, {}).get('emoji') or "📦"
+            inv_text += f"{emoji} {item}: {count}\n"
         
     field_text = render_grid(grid, cursor_pos)
     kb = grid_keyboard("kitchen")

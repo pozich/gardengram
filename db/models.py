@@ -13,6 +13,7 @@ INGREDIENTS = {
     'apple': {'emoji': '🍎', 'rarity': 2, 'collectable': True},
     'sugar': {'emoji': '🍬', 'rarity': 3, 'collectable': True},
     'salt': {'emoji': '🧂', 'rarity': 4, 'collectable': True},
+    'water': {'emoji': '💧', 'rarity': 1, 'collectable': False},
 }
 
 PROCESSES = {
