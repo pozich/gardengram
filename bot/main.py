@@ -122,14 +122,21 @@ async def register_nick(message: Message, state: FSMContext):
 
 @router.message(Command("garden"))
 async def garden_command(message: Message):
-    user_id = message.from_user.id
-    registered = await db.is_registered(user_id)
-    
-    if not registered:
-        await message.answer("❌ Сначала зарегистрируйся в личке бота!")
-        return
-    
-    await show_garden(message)
+    print(f"DEBUG: Received /garden from {message.from_user.id} in {message.chat.type}")
+    try:
+        user_id = message.from_user.id
+        registered = await db.is_registered(user_id)
+        
+        if not registered:
+            print(f"DEBUG: User {user_id} is not registered")
+            await message.answer("❌ Сначала зарегистрируйся в личке бота!")
+            return
+        
+        print(f"DEBUG: Showing garden for {user_id}")
+        await show_garden(message)
+    except Exception as e:
+        print(f"ERROR in garden_command: {e}")
+        await message.answer(f"❌ Произошла ошибка: {e}")
 
 async def show_garden(message_or_cb):
     user_id = message_or_cb.from_user.id
@@ -175,12 +182,15 @@ async def show_garden(message_or_cb):
     text = f"🌱 **Сад** (найди {wheat_count}🌾 и {apple_count}🍎)\n\n{field_text}"
     
     if isinstance(message_or_cb, Message):
-        await message_or_cb.reply(text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await message_or_cb.reply(text, reply_markup=kb, parse_mode="Markdown")
+        except Exception as e:
+            print(f"ERROR replying in show_garden: {e}")
     else:
         try:
             await message_or_cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-        except:
-            pass
+        except Exception as e:
+            print(f"ERROR editing text in show_garden: {e}")
 
 @router.callback_query(F.data == "action_execute_garden")
 async def action_execute_garden(callback: CallbackQuery):
@@ -449,6 +459,11 @@ def move_handlers():
     @router.callback_query(F.data == "none")
     async def ignore_press(callback: CallbackQuery):
         await callback.answer()
+
+@router.message()
+async def any_message_handler(message: Message):
+    if message.text:
+        print(f"DEBUG: Message in {message.chat.type} from {message.from_user.id}: {message.text[:50]}")
 
 move_handlers()
 
