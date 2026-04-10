@@ -1,0 +1,31 @@
+FOOD_CATEGORY = {
+    "PLANT": "Растительная",
+    "ANIMAL": "Животная",
+    "SEAFOOD": "Морепродукты",
+    "WASTE": "Продукты жизнедеятельности"
+}
+
+FOOD_STATUS_MULT = {
+    "RAW": {"label": "Сырой",
+        "satiety": 1.00, "poison": 1.00, "expiration": 1.00
+    },
+    "DIRTY": {"label": "Грязный",
+        "satiety": 1.15, "poison": 2.00, "expiration": 1.50
+    },
+    "FRIED": {"label": "Жареный",
+        "satiety": 1.30, "poison": 0.40, "expiration": 0.80
+    },
+    "BOILED": {"label": "Вареный",
+        "satiety": 1.25, "poison": 0.45, "expiration": 0.75
+    },
+    "FROZEN": {"label": "Замороженный",
+        "satiety": 1.00, "poison": 1.00, "expiration": None
+    },
+    "DRIED": {"label": "Сушеный",
+        "satiety": 1.10, "poison": 0.90, "expiration": 2.00
+    },
+    "ROTTEN": {"label": "Гниль",
+        "satiety": 0.20, "poison": 4.00, "expiration": 0.00
+    }
+}
+

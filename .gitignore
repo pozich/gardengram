@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+ENV/
+
+# Databases
+*.sqlite3
+postgres_data/
+
+# Docker
+.dockerignore
+
+# IDE & Editors (Neovim/Vim)
+.netrwhist
+undo/
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# OS specific (Linux/Arch)
+.DS_Store
+Thumbs.db
+lost+found/
+
+# Project specific
+logs/
+*.log
+media/
+static/
+
